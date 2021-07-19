@@ -1,6 +1,6 @@
 diff -Nurp linux-5.13.1.orig/fs/namei.c linux-5.13.1/fs/namei.c
 --- linux-5.13.1.orig/fs/namei.c	2021-07-07 20:24:58.000000000 +0800
-+++ linux-5.13.1/fs/namei.c	2021-07-16 12:20:31.213843310 +0800
++++ linux-5.13.1/fs/namei.c	2021-07-19 10:58:53.902940375 +0800
 @@ -522,6 +522,11 @@ int inode_permission(struct user_namespa
  }
  EXPORT_SYMBOL(inode_permission);
@@ -15,7 +15,7 @@ diff -Nurp linux-5.13.1.orig/fs/namei.c linux-5.13.1/fs/namei.c
   * @path: path to get the reference to
 diff -Nurp linux-5.13.1.orig/include/linux/fs.h linux-5.13.1/include/linux/fs.h
 --- linux-5.13.1.orig/include/linux/fs.h	2021-07-07 20:24:58.000000000 +0800
-+++ linux-5.13.1/include/linux/fs.h	2021-07-16 12:20:19.864875939 +0800
++++ linux-5.13.1/include/linux/fs.h	2021-07-19 10:58:53.906940295 +0800
 @@ -3004,6 +3004,7 @@ static inline int bmap(struct inode *ino
  int notify_change(struct user_namespace *, struct dentry *,
  		  struct iattr *, struct inode **);
@@ -39,7 +39,7 @@ diff -Nurp linux-5.13.1.orig/include/linux/fs.h linux-5.13.1/include/linux/fs.h
  }
 diff -Nurp linux-5.13.1.orig/include/linux/lsm_hook_defs.h linux-5.13.1/include/linux/lsm_hook_defs.h
 --- linux-5.13.1.orig/include/linux/lsm_hook_defs.h	2021-07-07 20:24:58.000000000 +0800
-+++ linux-5.13.1/include/linux/lsm_hook_defs.h	2021-07-16 19:07:55.155356868 +0800
++++ linux-5.13.1/include/linux/lsm_hook_defs.h	2021-07-19 14:14:04.679511570 +0800
 @@ -135,6 +135,7 @@ LSM_HOOK(int, 0, inode_readlink, struct
  LSM_HOOK(int, 0, inode_follow_link, struct dentry *dentry, struct inode *inode,
  	 bool rcu)
@@ -50,12 +50,12 @@ diff -Nurp linux-5.13.1.orig/include/linux/lsm_hook_defs.h linux-5.13.1/include/
  LSM_HOOK(int, 0, inode_setxattr, struct user_namespace *mnt_userns,
 diff -Nurp linux-5.13.1.orig/include/linux/security.h linux-5.13.1/include/linux/security.h
 --- linux-5.13.1.orig/include/linux/security.h	2021-07-07 20:24:58.000000000 +0800
-+++ linux-5.13.1/include/linux/security.h	2021-07-14 18:58:52.308257771 +0800
++++ linux-5.13.1/include/linux/security.h	2021-07-19 14:18:41.178013922 +0800
 @@ -1757,6 +1757,7 @@ static inline void security_skb_classify
  #endif	/* CONFIG_SECURITY_NETWORK_XFRM */
  
  #ifdef CONFIG_SECURITY_PATH
-+int security_path_permission(const struct path *dir, int mask);
++int security_path_permission(const struct path *path, int mask);
  int security_path_unlink(const struct path *dir, struct dentry *dentry);
  int security_path_mkdir(const struct path *dir, struct dentry *dentry, umode_t mode);
  int security_path_rmdir(const struct path *dir, struct dentry *dentry);
@@ -63,7 +63,7 @@ diff -Nurp linux-5.13.1.orig/include/linux/security.h linux-5.13.1/include/linux
  int security_path_chown(const struct path *path, kuid_t uid, kgid_t gid);
  int security_path_chroot(const struct path *path);
  #else	/* CONFIG_SECURITY_PATH */
-+static inline int security_path_permission(const struct path *dir, int mask)
++static inline int security_path_permission(const struct path *path, int mask)
 +{
 +	return 0;
 +}
@@ -72,33 +72,56 @@ diff -Nurp linux-5.13.1.orig/include/linux/security.h linux-5.13.1/include/linux
  	return 0;
 diff -Nurp linux-5.13.1.orig/security/landlock/fs.c linux-5.13.1/security/landlock/fs.c
 --- linux-5.13.1.orig/security/landlock/fs.c	2021-07-07 20:24:58.000000000 +0800
-+++ linux-5.13.1/security/landlock/fs.c	2021-07-18 15:39:27.085736384 +0800
++++ linux-5.13.1/security/landlock/fs.c	2021-07-19 14:16:19.640176008 +0800
 @@ -629,6 +629,13 @@ static int hook_path_rmdir(const struct
  	return current_check_access_path(dir, LANDLOCK_ACCESS_FS_REMOVE_DIR);
  }
  
-+static int hook_path_permission(const struct path *dir, int mask)
++static int hook_path_permission(const struct path *path, int mask)
 +{
-+	if (S_ISDIR(d_inode(dir->dentry)->i_mode) && (mask & (MAY_EXEC|MAY_CHDIR)))
-+		return current_check_access_path(dir, LANDLOCK_ACCESS_FS_EXECUTE);
++	if (S_ISDIR(d_inode(path->dentry)->i_mode) && (mask & (MAY_EXEC|MAY_CHDIR)))
++		return current_check_access_path(path, LANDLOCK_ACCESS_FS_EXECUTE);
 +	return 0;
 +}
 +
  /* File hooks */
  
  static inline u32 get_file_access(const struct file *const file)
-@@ -646,6 +653,10 @@ static inline u32 get_file_access(const
- 	/* __FMODE_EXEC is indeed part of f_flags, not f_mode. */
- 	if (file->f_flags & __FMODE_EXEC)
- 		access |= LANDLOCK_ACCESS_FS_EXECUTE;
-+
-+	if (S_ISDIR(file_inode(file)->i_mode) && (file->f_mode & FMODE_PATH))
-+		access |= LANDLOCK_ACCESS_FS_EXECUTE;
-+
+@@ -649,6 +656,23 @@ static inline u32 get_file_access(const
  	return access;
  }
  
-@@ -682,6 +693,8 @@ static struct security_hook_list landloc
++static int check_access_parent_path(const struct landlock_ruleset *const dom,
++		const struct path *const path, u32 access_request)
++{
++	struct path p_path;
++	struct dentry *d_parent = NULL;
++	int retval = 0;
++
++	d_parent = dget_parent(path->dentry);
++	p_path.mnt = path->mnt;
++	p_path.dentry =  d_parent;
++
++	retval = check_access_path(dom, &p_path, access_request);
++	dput(d_parent);
++
++	return retval;
++}
++
+ static int hook_file_open(struct file *const file)
+ {
+ 	const struct landlock_ruleset *const dom =
+@@ -661,6 +685,9 @@ static int hook_file_open(struct file *c
+ 	 * return 0.  This case will be handled with a future Landlock
+ 	 * evolution.
+ 	 */
++	if (file->f_flags & O_PATH) 
++		return check_access_parent_path(dom, &file->f_path, LANDLOCK_ACCESS_FS_EXECUTE);
++
+ 	return check_access_path(dom, &file->f_path, get_file_access(file));
+ }
+ 
+@@ -682,6 +709,8 @@ static struct security_hook_list landloc
  	LSM_HOOK_INIT(path_unlink, hook_path_unlink),
  	LSM_HOOK_INIT(path_rmdir, hook_path_rmdir),
  
@@ -109,16 +132,16 @@ diff -Nurp linux-5.13.1.orig/security/landlock/fs.c linux-5.13.1/security/landlo
  
 diff -Nurp linux-5.13.1.orig/security/security.c linux-5.13.1/security/security.c
 --- linux-5.13.1.orig/security/security.c	2021-07-07 20:24:58.000000000 +0800
-+++ linux-5.13.1/security/security.c	2021-07-16 19:06:06.351358344 +0800
++++ linux-5.13.1/security/security.c	2021-07-19 14:17:22.339821325 +0800
 @@ -1123,6 +1123,13 @@ int security_old_inode_init_security(str
  EXPORT_SYMBOL(security_old_inode_init_security);
  
  #ifdef CONFIG_SECURITY_PATH
-+int security_path_permission(const struct path *dir, int mask)
++int security_path_permission(const struct path *path, int mask)
 +{
-+	if (unlikely(IS_PRIVATE(d_backing_inode(dir->dentry))))
++	if (unlikely(IS_PRIVATE(d_backing_inode(path->dentry))))
 +		return 0;
-+	return call_int_hook(path_permission, 0, dir, mask);
++	return call_int_hook(path_permission, 0, path, mask);
 +}
 +
  int security_path_mknod(const struct path *dir, struct dentry *dentry, umode_t mode,
