@@ -4,4 +4,4 @@
 3. 本patch 以主线kernel v5.13.1, 增加以下基于路径的访问控制功能: chdir/truncate/stat/flock/chmod/chown/setxattr/utime/ioctl/fcntl/access. 使landlock更完整。
 
 4. (1) 在LSM框架中增加了一些hook.
-   (2) 有一些权限判断不一定合理。 例如 sys_stat 需要'读'权限, setxattr 需要'写'权限。 这些权限可以细化一下。
+   (2) 有一些权限判断不一定合理， 可以细化一下。
